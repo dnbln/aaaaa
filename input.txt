@@ -1,0 +1,13 @@
+# for classes
+org/jetbrains/annotations/ApiStatus$Internal
+
+# for fields
+com/google/gson/JsonNull#INSTANCE
+
+# for methods
+com/google/gson/Gson#newBuilder()Lcom/google/gson/GsonBuilder;
+
+# com/google/gson/JsonElement#getAsCharacter()C
+# com/google/gson/GsonBuilder#addReflectionAccessFilter(Lcom/google/gson/ReflectionAccessFilter;)Lcom/google/gson/GsonBuilder;
+
+# com/google/gson/GsonBuilder
