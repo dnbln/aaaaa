@@ -1,5 +1,3 @@
-package com.dysaster
-
 import org.objectweb.asm.AnnotationVisitor
 import org.objectweb.asm.Attribute
 import org.objectweb.asm.ClassReader
@@ -156,10 +154,10 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
             // replace all method bodies with `throw new RuntimeException();`
 
             // NEW java/lang/IllegalArgumentException
-            del.visitTypeInsn(NEW, "java/lang/RuntimeException");
+            del.visitTypeInsn(NEW, "java/lang/RuntimeException")
 
             // DUP
-            del.visitInsn(DUP);
+            del.visitInsn(DUP)
 
             // INVOKESPECIAL java/lang/RuntimeException.<init>()V
             del.visitMethodInsn(
@@ -168,10 +166,10 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
                 "<init>",
                 "()V",
                 false
-            );
+            )
 
             // ATHROW
-            del.visitInsn(ATHROW);
+            del.visitInsn(ATHROW)
         }
 
         override fun visitAnnotation(desc: String?, visible: Boolean): AnnotationVisitor? {
