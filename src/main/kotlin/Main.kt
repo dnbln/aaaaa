@@ -280,7 +280,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<WqItem>)
             cr.accept(this, 0)
         }.also {
             currentJar = null
-        }
+        }.also { it.exceptionOrNull()?.printStackTrace() }
 
         return true
     }
