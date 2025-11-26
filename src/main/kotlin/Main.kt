@@ -14,7 +14,22 @@ import java.io.FileReader
 import java.util.jar.JarFile
 import java.util.zip.ZipOutputStream
 
-class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>) : ClassVisitor(ASM4) {
+class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<WqItem>) : ClassVisitor(ASM4) {
+    data class WqItem(
+        val item: String,
+//        val jarFile: JarFile?,
+    ) {
+        fun parentWqItems(): List<String> {
+            val className = item.split("$")
+            val parents = mutableListOf<String>()
+            for (i in 1 until className.size) {
+                parents.add(className.subList(0, i).joinToString("$"))
+            }
+//            println("Parent WQ items for $item: $parents")
+            return parents
+        }
+    }
+
     internal sealed class MemberDescriptor {
         data class FieldDescriptor(val name: String) : MemberDescriptor()
         data class MethodDescriptor(val name: String, val signature: String) : MemberDescriptor()
@@ -22,7 +37,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
     }
 
     var depsMode: Boolean = false
-    val depsWq: MutableList<String> = mutableListOf()
+    val depsWq: MutableList<WqItem> = mutableListOf()
 
     val classes = mutableMapOf<String, ClassWriter>() // map of class name to class writer in outJar
     fun classForName(name: String): ClassWriter = classes.getOrPut(name) { ClassWriter(0) }
@@ -37,7 +52,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
                 return
             }
 
-            this@ExplorerClassVisitor.depsWq.add(name)
+            this@ExplorerClassVisitor.depsWq.add(WqItem(name))
         }
     }
 
@@ -46,9 +61,12 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
     private val visited: MutableList<String> = mutableListOf()
 
     override fun visitInnerClass(name: String?, outerName: String?, innerName: String?, access: Int) {
+//        println("Visiting inner class: $name of outer $outerName as $innerName")
         when (val member = lookingForMember) {
             is MemberDescriptor.InnerClassDescriptor -> {
-                if (member.name == innerName) {
+//                println("Looking for inner class ${member.name}")
+                if (member.name == name || member.name.startsWith("$name$")) {
+//                    println("Found inner class $name")
                     currentClass!!.visitInnerClass(name, outerName, innerName, access)
                 }
             }
@@ -95,16 +113,25 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         superName: String?,
         interfaces: Array<out String?>?
     ) {
+//        println("Visiting class: $name extends $superName implements ${interfaces?.joinToString(",")}")
+        if (superName != null && !visited.contains(superName))
+            depsWq.add(WqItem(superName))
+        for (i in interfaces.orEmpty()) {
+            if (i != null && !visited.contains(i))
+                depsWq.add(WqItem(i))
+        }
         super.visit(version, access, name, signature, superName, interfaces)
         currentClass!!.visit(version, access, name, signature, superName, interfaces)
     }
 
     override fun visitOuterClass(owner: String?, name: String?, desc: String?) {
+//        println("Visiting outer class: $owner.$name $desc")
         super.visitOuterClass(owner, name, desc)
         currentClass!!.visitOuterClass(owner, name, desc)
     }
 
     override fun visitAnnotation(desc: String?, visible: Boolean): AnnotVisitor? {
+        SignatureReader(desc).acceptType(SigVisitor())
         return currentClass!!.visitAnnotation(desc, visible)?.let(::AnnotVisitor)
     }
 
@@ -145,7 +172,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         }
     }
 
-    class MVisitor(val del: MethodVisitor) : MethodVisitor(ASM4) {
+    inner class MVisitor(val del: MethodVisitor) : MethodVisitor(ASM4) {
         override fun visitAnnotationDefault(): AnnotationVisitor? {
             return del.visitAnnotationDefault()?.let(::AnnotVisitor)
         }
@@ -153,7 +180,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         override fun visitCode() {
             // replace all method bodies with `throw new RuntimeException();`
 
-            // NEW java/lang/IllegalArgumentException
+            // NEW java/lang/RuntimeException
             del.visitTypeInsn(NEW, "java/lang/RuntimeException")
 
             // DUP
@@ -173,6 +200,7 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         }
 
         override fun visitAnnotation(desc: String?, visible: Boolean): AnnotationVisitor? {
+            SignatureReader(desc).acceptType(SigVisitor())
             return del.visitAnnotation(desc, visible)?.let(::AnnotVisitor)
         }
 
@@ -217,9 +245,9 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         }
     }
 
-    fun run(wqItem: String) {
-        if (visited.contains(wqItem)) return
-        visited.add(wqItem)
+    fun run(wqItem: WqItem) {
+        if (visited.contains(wqItem.item)) return
+        visited.add(wqItem.item)
         find(wqItem)
     }
 
@@ -236,16 +264,23 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         }
     }
 
+    var currentJar: JarFile? = null
+
     fun visitInJar(jar: JarFile, className: String): Boolean {
         val effectiveClassName = className.replace(".", "/") + ".class"
         val entry = jar.getJarEntry(effectiveClassName) ?: return false
 
         println("Entry $effectiveClassName found in JAR ${jar.name}")
 
-        val inputStream = jar.getInputStream(entry)
-        val cr = ClassReader(inputStream)
-        currentClass = classForName(effectiveClassName)
-        cr.accept(this, 0)
+        currentJar = jar
+        runCatching {
+            val inputStream = jar.getInputStream(entry)
+            val cr = ClassReader(inputStream)
+            currentClass = classForName(effectiveClassName)
+            cr.accept(this, 0)
+        }.also {
+            currentJar = null
+        }
 
         return true
     }
@@ -259,9 +294,11 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
         return null
     }
 
-    fun find(toFind: String) {
-        if (toFind.contains("#")) {
-            val parts = toFind.split("#")
+    fun find(toFind: WqItem) {
+        println("Looking for ${toFind.item}")
+        val className = toFind.item
+        if (className.contains("#")) {
+            val parts = className.split("#")
             val className = parts[0]
             val memberName = parts[1]
             if (memberName.contains("(")) {
@@ -275,21 +312,19 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
             visitAllJars(className)
 
             lookingForMember = null
-        } else if (toFind.contains("$")) {
+        } else if (className.contains("$")) {
             // outer class
-            val outerClassName = toFind.substringBefore("$")
-            val className = toFind.substringAfter("$")
-
             lookingForMember = MemberDescriptor.InnerClassDescriptor(className)
-            val jar = visitAllJars(outerClassName)
-            lookingForMember = null
-
+            val jar = visitAllJars(className)
             if (jar != null) {
-                // inner class
-                visitInJar(jar, toFind)
+                for (item in toFind.parentWqItems()) {
+                    // inner class
+                    visitInJar(jar, item)
+                }
             }
+            lookingForMember = null
         } else {
-            visitAllJars(toFind)
+            visitAllJars(className)
         }
     }
 
@@ -305,13 +340,15 @@ class ExplorerClassVisitor(val jars: List<JarFile>, val wq: MutableList<String>)
 
 fun main(args: Array<String>) {
     val jars = mutableListOf<JarFile>()
-    val input = mutableListOf<String>()
+    val input = mutableListOf<ExplorerClassVisitor.WqItem>()
     for (arg in args) {
         if (arg.endsWith(".jar")) {
             jars.add(JarFile(arg))
         } else {
             FileReader(arg).useLines {
-                it.filter { s -> !s.startsWith("#") && s.trim() != "" }.forEach(input::add)
+                input.addAll(
+                    it.filter { s -> !s.startsWith("#") && s.trim() != "" }
+                        .map(ExplorerClassVisitor::WqItem))
             }
         }
     }

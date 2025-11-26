@@ -11,3 +11,8 @@ com/google/gson/Gson#newBuilder()Lcom/google/gson/GsonBuilder;
 # com/google/gson/GsonBuilder#addReflectionAccessFilter(Lcom/google/gson/ReflectionAccessFilter;)Lcom/google/gson/GsonBuilder;
 
 # com/google/gson/GsonBuilder
+
+# dev/dnbln/Main$A
+# dev/dnbln/Main$A$B
+dev/dnbln/Main$A$B$C
+dev/dnbln/Main#main([Ljava/lang/String;)V
